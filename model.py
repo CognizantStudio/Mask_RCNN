@@ -261,15 +261,26 @@ class ProposalLayer(KE.Layer):
         # Improve performance by trimming to top anchors by score
         # and doing the rest on the smaller subset.
         pre_nms_limit = min(6000, self.anchors.shape[0])
-        ix = tf.nn.top_k(scores, pre_nms_limit, sorted=True,
-                         name="top_anchors").indices
-        scores = utils.batch_slice([scores, ix], lambda x, y: tf.gather(x, y),
-                                   self.config.IMAGES_PER_GPU)
-        deltas = utils.batch_slice([deltas, ix], lambda x, y: tf.gather(x, y),
-                                   self.config.IMAGES_PER_GPU)
-        anchors = utils.batch_slice(ix, lambda x: tf.gather(anchors, x),
-                                    self.config.IMAGES_PER_GPU,
-                                    names=["pre_nms_anchors"])
+        # ix = tf.nn.top_k(scores, pre_nms_limit, sorted=True,
+        #                  name="top_anchors").indices
+        # scores = utils.batch_slice([scores, ix], lambda x, y: tf.gather(x, y),
+        #                            self.config.IMAGES_PER_GPU)
+        # deltas = utils.batch_slice([deltas, ix], lambda x, y: tf.gather(x, y),
+        #                            self.config.IMAGES_PER_GPU)
+        # anchors = utils.batch_slice(ix, lambda x: tf.gather(anchors, x),
+        #                             self.config.IMAGES_PER_GPU,
+        #                             names=["pre_nms_anchors"])
+        scores, ix = tf.nn.top_k(scores, pre_nms_limit, sorted=True, name="top_anchors")
+
+        if self.config.IMAGES_PER_GPU == 1:
+            # NOTE: This only works if config.IMAGES_PER_GPU = 1
+            #       if not, use the batch_slice version below.
+            deltas = tf.squeeze(tf.gather(deltas, ix, axis=1), axis=[1])
+        else:
+            deltas = utils.batch_slice([deltas, ix], lambda x, y: tf.gather(x, y),
+                                       self.config.IMAGES_PER_GPU)
+
+        anchors = tf.gather(anchors, ix)
 
         # Apply deltas to anchors to get refined anchors.
         # [batch, N, (y1, x1, y2, x2)]
@@ -1970,7 +1981,7 @@ class MaskRCNN():
 
         # Add multi-GPU support.
         if config.GPU_COUNT > 1:
-            from parallel_model import ParallelModel
+            from Mask_RCNN.parallel_model import ParallelModel
             model = ParallelModel(model, config.GPU_COUNT)
 
         return model
@@ -2168,13 +2179,13 @@ class MaskRCNN():
         train_dataset, val_dataset: Training and validation Dataset objects.
         learning_rate: The learning rate to train with
         epochs: Number of training epochs. Note that previous training epochs
-                are considered to be done alreay, so this actually determines
-                the epochs to train in total rather than in this particaular
+                are considered to be done already, so this actually determines
+                the epochs to train in total rather than in this particular
                 call.
         layers: Allows selecting wich layers to train. It can be:
             - A regular expression to match layer names to train
             - One of these predefined values:
-              heaads: The RPN, classifier and mask heads of the network
+              heads: The RPN, classifier and mask heads of the network
               all: All the layers
               3+: Train Resnet stage 3 and up
               4+: Train Resnet stage 4 and up
@@ -2203,6 +2214,9 @@ class MaskRCNN():
                                        batch_size=self.config.BATCH_SIZE,
                                        augment=False)
 
+        train_generator = utils.ThreadsafeIter(train_generator)
+        val_generator = utils.ThreadsafeIter(val_generator)
+
         # Callbacks
         callbacks = [
             keras.callbacks.TensorBoard(log_dir=self.log_dir,
@@ -2216,6 +2230,7 @@ class MaskRCNN():
         log("Checkpoint Path: {}".format(self.checkpoint_path))
         self.set_trainable(layers)
         self.compile(learning_rate, self.config.LEARNING_MOMENTUM)
+        log('Compile complete')
 
         # Work-around for Windows: Keras fails on Windows when using
         # multiprocessing workers. See discussion here:
@@ -2237,6 +2252,7 @@ class MaskRCNN():
             workers=workers,
             use_multiprocessing=True,
         )
+        log('fit_generator complete')
         self.epoch = max(self.epoch, epochs)
 
     def mold_inputs(self, images):
