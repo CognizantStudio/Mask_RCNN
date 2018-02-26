@@ -7,10 +7,7 @@ Licensed under the MIT License (see LICENSE for details)
 Written by Waleed Abdulla
 """
 
-import sys
 import os
-import math
-import random
 import numpy as np
 import tensorflow as tf
 import scipy.misc
@@ -22,6 +19,15 @@ import threading
 
 # URL from which to download the latest COCO trained weights
 COCO_MODEL_URL = "https://github.com/matterport/Mask_RCNN/releases/download/v2.0/mask_rcnn_coco.h5"
+
+# Root directory of the project
+ROOT_DIR = os.getcwd()
+
+# Directory to save logs and trained model
+MODEL_DIR = os.path.join(ROOT_DIR, "logs")
+
+# Local path to trained weights file
+COCO_MODEL_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
 
 
 ############################################################
@@ -95,9 +101,9 @@ def compute_overlaps(boxes1, boxes2):
 
 
 def compute_overlaps_masks(masks1, masks2):
-    '''Computes IoU overlaps between two sets of masks.
+    """Computes IoU overlaps between two sets of masks.
     masks1, masks2: [Height, Width, instances]
-    '''
+    """
     # flatten masks
     masks1 = np.reshape(masks1 > .5, (-1, masks1.shape[-1])).astype(np.float32)
     masks2 = np.reshape(masks2 > .5, (-1, masks2.shape[-1])).astype(np.float32)
@@ -129,7 +135,7 @@ def non_max_suppression(boxes, scores, threshold):
     x2 = boxes[:, 3]
     area = (y2 - y1) * (x2 - x1)
 
-    # Get indicies of boxes sorted by scores (highest first)
+    # Get indices of boxes sorted by scores (highest first)
     ixs = scores.argsort()[::-1]
 
     pick = []
@@ -245,26 +251,40 @@ class Dataset(object):
     See COCODataset and ShapesDataset as examples.
     """
 
-    def __init__(self, class_map=None):
+    # Background is always the first class
+    class_info = [{"source": "", "id": 0, "name": "BG"}]
+
+    def __init__(self):
         self._image_ids = []
         self.image_info = []
-        # Background is always the first class
-        self.class_info = [{"source": "", "id": 0, "name": "BG"}]
         self.source_class_ids = {}
+        self.class_from_source_map = {}
+        self.external_to_class_id = {}
+        self.external_to_image_id = {}
 
-    def add_class(self, source, class_id, class_name):
+    @classmethod
+    def add_class(cls, source, class_id, class_name):
         assert "." not in source, "Source name cannot contain a dot"
         # Does the class exist already?
-        for info in self.class_info:
+        for info in cls.class_info:
             if info['source'] == source and info["id"] == class_id:
                 # source.class_id combination already available, skip
                 return
         # Add the class
-        self.class_info.append({
+        cls.class_info.append({
             "source": source,
             "id": class_id,
             "name": class_name,
         })
+
+    @classmethod
+    def safe_add_class(cls, source, class_name):
+        for info in cls.class_info:
+            if info['source'] == source and info['name'] == class_name:
+                # source.name combination already available, skip
+                return
+        # Add the class
+        cls.add_class(source, len(cls.class_info) + 1, class_name)
 
     def add_image(self, source, image_id, path, **kwargs):
         image_info = {
@@ -284,6 +304,37 @@ class Dataset(object):
         """
         return ""
 
+    @staticmethod
+    def clean_name(name):
+        """Returns a shorter version of object names for cleaner display."""
+        return ",".join(name.split(",")[:1])
+
+    @property
+    def num_classes(self):
+        return len(self.class_info)
+
+    @property
+    def class_names(self):
+        # TODO: Cache me
+        return [self.clean_name(c["name"]) for c in self.class_info]
+
+    @property
+    def class_ids(self):
+        return np.arange(self.num_classes)
+
+    @property
+    def num_images(self):
+        return len(self.image_info)
+
+    @property
+    def sources(self):
+        # TODO: Cache me
+        return list(sorted(set([i['source'] for i in self.class_info])))
+
+    @property
+    def class_name_reverse_map(self):
+        return {class_name: i for i, class_name in zip(self.class_ids, self.class_names)}
+
     def prepare(self, class_map=None):
         """Prepares the Dataset class for use.
 
@@ -291,22 +342,14 @@ class Dataset(object):
               classes from different datasets to the same class ID.
         """
 
-        def clean_name(name):
-            """Returns a shorter version of object names for cleaner display."""
-            return ",".join(name.split(",")[:1])
-
         # Build (or rebuild) everything else from the info dicts.
-        self.num_classes = len(self.class_info)
-        self.class_ids = np.arange(self.num_classes)
-        self.class_names = [clean_name(c["name"]) for c in self.class_info]
-        self.num_images = len(self.image_info)
         self._image_ids = np.arange(self.num_images)
 
         self.class_from_source_map = {"{}.{}".format(info['source'], info['id']): id
                                       for info, id in zip(self.class_info, self.class_ids)}
 
         # Map sources to class_ids they support
-        self.sources = list(set([i['source'] for i in self.class_info]))
+        # self.sources = list(set([i['source'] for i in self.class_info]))
         self.source_class_ids = {}
         # Loop over datasets
         for source in self.sources:
@@ -717,17 +760,37 @@ def batch_slice(inputs, graph_fn, batch_size, names=None):
     return result
 
 
-def download_trained_weights(coco_model_path, verbose=1):
+def download_trained_weights(coco_model_path=COCO_MODEL_PATH, verbose=1, force=False):
     """Download COCO trained weights from Releases.
 
     coco_model_path: local path of COCO trained weights
     """
+    if force or not os.path.exists(coco_model_path):
+        if verbose > 0:
+            print("Downloading pretrained model to {} ...".format(coco_model_path))
+        with urllib.request.urlopen(COCO_MODEL_URL) as resp, open(coco_model_path, 'wb') as out:
+            shutil.copyfileobj(resp, out)
+        if verbose > 0:
+            print("... done downloading pretrained model!")
+
+
+def load_weights(model, init_with='coco', verbose=1):
     if verbose > 0:
-        print("Downloading pretrained model to " + coco_model_path + " ...")
-    with urllib.request.urlopen(COCO_MODEL_URL) as resp, open(coco_model_path, 'wb') as out:
-        shutil.copyfileobj(resp, out)
+        print('Loading weights from {}'.format(init_with))
+    if init_with == "imagenet":
+        model.load_weights(model.get_imagenet_weights(), by_name=True)
+    elif init_with == "coco":
+        # Load weights trained on MS COCO, but skip layers that
+        # are different due to the different number of classes
+        # See README for instructions to download the COCO weights
+        model.load_weights(COCO_MODEL_PATH, by_name=True,
+                           exclude=["mrcnn_class_logits", "mrcnn_bbox_fc",
+                                    "mrcnn_bbox", "mrcnn_mask"])
+    elif init_with == "last":
+        # Load the last model you trained and continue training
+        model.load_weights(model.find_last()[1], by_name=True)
     if verbose > 0:
-        print("... done downloading pretrained model!")
+        print('Done loading weights')
 
 
 class ThreadsafeIter:
