@@ -28,6 +28,7 @@ import keras.initializers as KI
 import keras.engine as KE
 import keras.models as KM
 
+from Mask_RCNN.utils import BoundingBoxException
 from . import utils
 
 # Requires TensorFlow 1.3+ and Keras 2.0.8+.
@@ -1744,6 +1745,8 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                 b = 0
         except (GeneratorExit, KeyboardInterrupt):
             raise
+        except BoundingBoxException as e:
+            print('Yet another Bounding Box error')
         except:
             # Log it and skip the image
             logging.exception("Error processing image {}".format(
