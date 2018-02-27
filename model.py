@@ -28,7 +28,6 @@ import keras.initializers as KI
 import keras.engine as KE
 import keras.models as KM
 
-from Mask_RCNN.utils import BoundingBoxException
 from . import utils
 
 # Requires TensorFlow 1.3+ and Keras 2.0.8+.
@@ -1745,9 +1744,10 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                 b = 0
         except (GeneratorExit, KeyboardInterrupt):
             raise
-        except BoundingBoxException as e:
+        except utils.BoundingBoxException:
+            print()
             print('Yet another Bounding Box error')
-        except:
+        except Exception:
             # Log it and skip the image
             logging.exception("Error processing image {}".format(
                 dataset.image_info[image_id]))
@@ -2180,7 +2180,7 @@ class MaskRCNN():
         self.checkpoint_path = self.checkpoint_path.replace(
             "*epoch*", "{epoch:04d}")
 
-    def train(self, train_dataset, val_dataset, learning_rate, epochs, layers):
+    def train(self, train_dataset, val_dataset, learning_rate, epochs, layers, is_epoch_count_relative=False):
         """Train the model.
         train_dataset, val_dataset: Training and validation Dataset objects.
         learning_rate: The learning rate to train with
@@ -2245,6 +2245,9 @@ class MaskRCNN():
             workers = 0
         else:
             workers = max(self.config.BATCH_SIZE // 2, 2)
+
+        if is_epoch_count_relative:
+            epochs += self.epoch
 
         self.keras_model.fit_generator(
             train_generator,
