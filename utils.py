@@ -324,7 +324,7 @@ class Dataset(object):
 
     @property
     def num_images(self):
-        return len(self.image_info)
+        return len(self.image_ids)
 
     @property
     def sources(self):
@@ -343,7 +343,7 @@ class Dataset(object):
         """
 
         # Build (or rebuild) everything else from the info dicts.
-        self._image_ids = np.arange(self.num_images)
+        self._image_ids = np.arange(len(self.image_info))
 
         self.class_from_source_map = {"{}.{}".format(info['source'], info['id']): id
                                       for info, id in zip(self.class_info, self.class_ids)}
