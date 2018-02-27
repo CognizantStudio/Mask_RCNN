@@ -1113,7 +1113,7 @@ def mrcnn_bbox_loss_graph(target_bbox, target_class_ids, pred_bbox):
     pred_bbox = K.reshape(pred_bbox, (-1, K.int_shape(pred_bbox)[2], 4))
 
     # Only positive ROIs contribute to the loss. And only
-    # the right class_id of each ROI. Get their indicies.
+    # the right class_id of each ROI. Get their indices.
     positive_roi_ix = tf.where(target_class_ids > 0)[:, 0]
     positive_roi_class_ids = tf.cast(
         tf.gather(target_class_ids, positive_roi_ix), tf.int64)
@@ -1121,6 +1121,9 @@ def mrcnn_bbox_loss_graph(target_bbox, target_class_ids, pred_bbox):
 
     # Gather the deltas (predicted and true) that contribute to loss
     target_bbox = tf.gather(target_bbox, positive_roi_ix)
+
+    # NOTE: if you have an exception here, you likely have an incorrect number
+    #       of categories specified in your config file.
     pred_bbox = tf.gather_nd(pred_bbox, indices)
 
     # Smooth-L1 Loss
