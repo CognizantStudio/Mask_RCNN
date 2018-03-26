@@ -891,7 +891,7 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 ############################################################
 
 def fpn_classifier_graph(rois, feature_maps,
-                         image_shape, pool_size, num_classes):
+                         image_shape, pool_size, num_classes, name_prefix="mrcnn"):
     """Builds the computation graph of the feature pyramid network classifier
     and regressor heads.
 
@@ -915,13 +915,13 @@ def fpn_classifier_graph(rois, feature_maps,
                         name="roi_align_classifier")([rois] + feature_maps)
     # Two 1024 FC layers (implemented with Conv2D for consistency)
     x = KL.TimeDistributed(KL.Conv2D(1024, (pool_size, pool_size), padding="valid"),
-                           name="mrcnn_class_conv1")(x)
-    x = KL.TimeDistributed(BatchNorm(axis=3), name='mrcnn_class_bn1')(x)
+                           name=name_prefix + "_class_conv1")(x)
+    x = KL.TimeDistributed(BatchNorm(axis=3), name=name_prefix + "_class_bn1")(x)
     x = KL.Activation('relu')(x)
     x = KL.TimeDistributed(KL.Conv2D(1024, (1, 1)),
-                           name="mrcnn_class_conv2")(x)
+                           name=name_prefix + "_class_conv2")(x)
     x = KL.TimeDistributed(BatchNorm(axis=3),
-                           name='mrcnn_class_bn2')(x)
+                           name=name_prefix + "_class_bn2")(x)
     x = KL.Activation('relu')(x)
 
     shared = KL.Lambda(lambda x: K.squeeze(K.squeeze(x, 3), 2),
@@ -929,23 +929,23 @@ def fpn_classifier_graph(rois, feature_maps,
 
     # Classifier head
     mrcnn_class_logits = KL.TimeDistributed(KL.Dense(num_classes),
-                                            name='mrcnn_class_logits')(shared)
+                                            name=name_prefix + "_class_logits")(shared)
     mrcnn_probs = KL.TimeDistributed(KL.Activation("softmax"),
-                                     name="mrcnn_class")(mrcnn_class_logits)
+                                     name=name_prefix + "_class")(mrcnn_class_logits)
 
     # BBox head
     # [batch, boxes, num_classes * (dy, dx, log(dh), log(dw))]
     x = KL.TimeDistributed(KL.Dense(num_classes * 4, activation='linear'),
-                           name='mrcnn_bbox_fc')(shared)
+                           name=name_prefix + "_bbox_fc")(shared)
     # Reshape to [batch, boxes, num_classes, (dy, dx, log(dh), log(dw))]
     s = K.int_shape(x)
-    mrcnn_bbox = KL.Reshape((s[1], num_classes, 4), name="mrcnn_bbox")(x)
+    mrcnn_bbox = KL.Reshape((s[1], num_classes, 4), name=name_prefix + "_bbox")(x)
 
     return mrcnn_class_logits, mrcnn_probs, mrcnn_bbox
 
 
 def build_fpn_mask_graph(rois, feature_maps,
-                         image_shape, pool_size, num_classes):
+                         image_shape, pool_size, num_classes, name_prefix="mrcnn"):
     """Builds the computation graph of the mask head of Feature Pyramid Network.
 
     rois: [batch, num_rois, (y1, x1, y2, x2)] Proposal boxes in normalized
@@ -965,33 +965,33 @@ def build_fpn_mask_graph(rois, feature_maps,
 
     # Conv layers
     x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
-                           name="mrcnn_mask_conv1")(x)
+                           name=name_prefix + "_mask_conv1")(x)
     x = KL.TimeDistributed(BatchNorm(axis=3),
-                           name='mrcnn_mask_bn1')(x)
+                           name=name_prefix + "_mask_bn1")(x)
     x = KL.Activation('relu')(x)
 
     x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
-                           name="mrcnn_mask_conv2")(x)
+                           name=name_prefix + "_mask_conv2")(x)
     x = KL.TimeDistributed(BatchNorm(axis=3),
-                           name='mrcnn_mask_bn2')(x)
+                           name=name_prefix + "_mask_bn2")(x)
     x = KL.Activation('relu')(x)
 
     x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
-                           name="mrcnn_mask_conv3")(x)
+                           name=name_prefix + "_mask_conv3")(x)
     x = KL.TimeDistributed(BatchNorm(axis=3),
-                           name='mrcnn_mask_bn3')(x)
+                           name=name_prefix + "_mask_bn3")(x)
     x = KL.Activation('relu')(x)
 
     x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
-                           name="mrcnn_mask_conv4")(x)
+                           name=name_prefix + "_mask_conv4")(x)
     x = KL.TimeDistributed(BatchNorm(axis=3),
-                           name='mrcnn_mask_bn4')(x)
+                           name=name_prefix + "_mask_bn4")(x)
     x = KL.Activation('relu')(x)
 
     x = KL.TimeDistributed(KL.Conv2DTranspose(256, (2, 2), strides=2, activation="relu"),
-                           name="mrcnn_mask_deconv")(x)
+                           name=name_prefix + "_mask_deconv")(x)
     x = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"),
-                           name="mrcnn_mask")(x)
+                           name=name_prefix + "_mask")(x)
     return x
 
 
@@ -1809,14 +1809,22 @@ class MaskRCNN():
             # 1. GT Class IDs (zero padded)
             input_gt_class_ids = KL.Input(
                 shape=[None], name="input_gt_class_ids", dtype=tf.int32)
+            input_gt_damage_class_ids = KL.Input(
+                shape=[None], name='input_gt_damage_class_ids', dtype=tf.int32)
+
             # 2. GT Boxes in pixels (zero padded)
             # [batch, MAX_GT_INSTANCES, (y1, x1, y2, x2)] in image coordinates
             input_gt_boxes = KL.Input(
                 shape=[None, 4], name="input_gt_boxes", dtype=tf.float32)
+            input_gt_damage_boxes = KL.Input(
+                shape=[None, 4], name="input_gt_damage_boxes", dtype=tf.float32)
+
             # Normalize coordinates
             h, w = K.shape(input_image)[1], K.shape(input_image)[2]
             image_scale = K.cast(K.stack([h, w, h, w], axis=0), tf.float32)
             gt_boxes = KL.Lambda(lambda x: x / image_scale)(input_gt_boxes)
+            gt_damage_boxes = KL.Lambda(lambda x: x / image_scale)(input_gt_damage_boxes)
+
             # 3. GT Masks (zero padded)
             # [batch, height, width, MAX_GT_INSTANCES]
             if config.USE_MINI_MASK:
@@ -1824,10 +1832,17 @@ class MaskRCNN():
                     shape=[config.MINI_MASK_SHAPE[0],
                            config.MINI_MASK_SHAPE[1], None],
                     name="input_gt_masks", dtype=bool)
+                input_gt_damage_masks = KL.Input(
+                    shape=[config.MINI_MASK_SHAPE[0],
+                           config.MINI_MASK_SHAPE[1], None],
+                    name="input_gt_damage_masks", dtype=bool)
             else:
                 input_gt_masks = KL.Input(
                     shape=[config.IMAGE_SHAPE[0], config.IMAGE_SHAPE[1], None],
                     name="input_gt_masks", dtype=bool)
+                input_gt_damage_masks = KL.Input(
+                    shape=[config.IMAGE_SHAPE[0], config.IMAGE_SHAPE[1], None],
+                    name="input_gt_damage_masks", dtype=bool)
 
         # Build the shared convolutional layers.
         # Bottom-up Layers
@@ -1915,12 +1930,17 @@ class MaskRCNN():
             # Subsamples proposals and generates target outputs for training
             # Note that proposal class IDs, gt_boxes, and gt_masks are zero
             # padded. Equally, returned rois and targets are zero padded.
+
+            # TREVTODO - Add damage loss ground truth do-hickies
             rois, target_class_ids, target_bbox, target_mask =\
                 DetectionTargetLayer(config, name="proposal_targets")([
                     target_rois, input_gt_class_ids, gt_boxes, input_gt_masks])
 
+            damage_rois, target_damage_class_ids, target_damage_bbox, target_damage_mask =\
+                DetectionTargetLayer(config, name="damage_proposal_targets")([
+                    target_rois, input_gt_damage_class_ids, input_gt_damage_boxes, input_gt_damage_masks])
+
             # Network Heads
-            # TODO: verify that this handles zero padded ROIs
             mrcnn_class_logits, mrcnn_class, mrcnn_bbox =\
                 fpn_classifier_graph(rois, mrcnn_feature_maps, config.IMAGE_SHAPE,
                                      config.POOL_SIZE, config.NUM_CLASSES)
@@ -1930,14 +1950,25 @@ class MaskRCNN():
                                               config.MASK_POOL_SIZE,
                                               config.NUM_CLASSES)
 
+            damage_class_logits, damage_class, damage_bbox =\
+                fpn_classifier_graph(damage_rois, mrcnn_feature_maps, config.IMAGE_SHAPE,
+                                     config.POOL_SIZE, config.NUM_CLASSES)
+
+            damage_mask = build_fpn_mask_graph(damage_rois, mrcnn_feature_maps,
+                                               config.IMAGE_SHAPE,
+                                               config.MASK_POOL_SIZE,
+                                               config.NUM_DAMAGE_CLASSES)
+
             # TODO: clean up (use tf.identify if necessary)
             output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
+            output_damage_rois = KL.Lambda(lambda x: x * 1, name="output_damage_rois")(damage_rois)
 
             # Losses
             rpn_class_loss = KL.Lambda(lambda x: rpn_class_loss_graph(*x), name="rpn_class_loss")(
                 [input_rpn_match, rpn_class_logits])
             rpn_bbox_loss = KL.Lambda(lambda x: rpn_bbox_loss_graph(config, *x), name="rpn_bbox_loss")(
                 [input_rpn_bbox, input_rpn_match, rpn_bbox])
+
             class_loss = KL.Lambda(lambda x: mrcnn_class_loss_graph(*x), name="mrcnn_class_loss")(
                 [target_class_ids, mrcnn_class_logits, active_class_ids])
             bbox_loss = KL.Lambda(lambda x: mrcnn_bbox_loss_graph(*x), name="mrcnn_bbox_loss")(
@@ -1945,13 +1976,26 @@ class MaskRCNN():
             mask_loss = KL.Lambda(lambda x: mrcnn_mask_loss_graph(*x), name="mrcnn_mask_loss")(
                 [target_mask, target_class_ids, mrcnn_mask])
 
+            # Damage head losses:
+            damage_class_loss = KL.Lambda(lambda x: mrcnn_class_loss_graph(*x), name="damage_class_loss")(
+                [target_damage_class_ids, damage_class_logits, active_class_ids])
+            damage_bbox_loss = KL.Lambda(lambda x: mrcnn_bbox_loss_graph(*x), name="damage_bbox_loss")(
+                [target_damage_bbox, target_damage_class_ids, damage_bbox])
+            damage_mask_loss = KL.Lambda(lambda x: mrcnn_mask_loss_graph(*x), name="damage_mask_loss")(
+                [target_damage_mask, target_damage_class_ids, damage_mask])
+
+
             # Model
             inputs = [input_image, input_image_meta,
-                      input_rpn_match, input_rpn_bbox, input_gt_class_ids, input_gt_boxes, input_gt_masks]
+                      input_rpn_match, input_rpn_bbox,
+                      input_gt_class_ids, input_gt_boxes, input_gt_masks,
+                      input_gt_damage_class_ids, input_gt_damage_boxes, input_gt_damage_masks]
+
             if not config.USE_RPN_ROIS:
                 inputs.append(input_rois)
             outputs = [rpn_class_logits, rpn_class, rpn_bbox,
                        mrcnn_class_logits, mrcnn_class, mrcnn_bbox, mrcnn_mask,
+                       damage_class_logits, damage_class, damage_bbox, damage_mask,
                        rpn_rois, output_rois,
                        rpn_class_loss, rpn_bbox_loss, class_loss, bbox_loss, mask_loss]
             model = KM.Model(inputs, outputs, name='mask_rcnn')
@@ -1962,10 +2006,17 @@ class MaskRCNN():
                 fpn_classifier_graph(rpn_rois, mrcnn_feature_maps, config.IMAGE_SHAPE,
                                      config.POOL_SIZE, config.NUM_CLASSES)
 
+            damage_class_logits, damage_class, damage_bbox =\
+                fpn_classifier_graph(rois, mrcnn_feature_maps, config.IMAGE_SHAPE,
+                                     config.POOL_SIZE, config.NUM_CLASSES)
+
             # Detections
             # output is [batch, num_detections, (y1, x1, y2, x2, class_id, score)] in image coordinates
             detections = DetectionLayer(config, name="mrcnn_detection")(
                 [rpn_rois, mrcnn_class, mrcnn_bbox, input_image_meta])
+
+            damage_detections = DetectionLayer(config, name="damage_detection")(
+                [rpn_rois, damage_class, damage_bbox, input_image_meta])
 
             # Convert boxes to normalized coordinates
             # TODO: let DetectionLayer return normalized coordinates to avoid
@@ -1974,15 +2025,28 @@ class MaskRCNN():
             detection_boxes = KL.Lambda(
                 lambda x: x[..., :4] / np.array([h, w, h, w]))(detections)
 
+            damage_detection_boxes = KL.Lambda(
+                lambda x: x[..., :4] / np.array([h, w, h, w]))(damage_detections)
+
             # Create masks for detections
             mrcnn_mask = build_fpn_mask_graph(detection_boxes, mrcnn_feature_maps,
                                               config.IMAGE_SHAPE,
                                               config.MASK_POOL_SIZE,
                                               config.NUM_CLASSES)
 
-            model = KM.Model([input_image, input_image_meta],
-                             [detections, mrcnn_class, mrcnn_bbox,
-                                 mrcnn_mask, rpn_rois, rpn_class, rpn_bbox],
+            damage_mask = build_fpn_mask_graph(damage_detection_boxes, mrcnn_feature_maps,
+                                               config.IMAGE_SHAPE,
+                                               config.MASK_POOL_SIZE,
+                                               config.NUM_DAMAGE_CLASSES)
+
+            inference_inputs = [input_image, input_image_meta]
+            inference_outputs = [detections, damage_detections,
+                                 mrcnn_class, mrcnn_bbox, mrcnn_mask,
+                                 damage_class, damage_bbox, damage_mask,
+                                 rpn_rois, rpn_class, rpn_bbox]
+
+            model = KM.Model(inference_inputs,
+                             inference_outputs,
                              name='mask_rcnn')
 
         # Add multi-GPU support.
@@ -2081,7 +2145,8 @@ class MaskRCNN():
         self.keras_model._losses = []
         self.keras_model._per_input_losses = {}
         loss_names = ["rpn_class_loss", "rpn_bbox_loss",
-                      "mrcnn_class_loss", "mrcnn_bbox_loss", "mrcnn_mask_loss"]
+                      "mrcnn_class_loss", "mrcnn_bbox_loss", "mrcnn_mask_loss",
+                      "damage_class_loss", "damage_bbox_loss", "damage_mask_loss"]
         for name in loss_names:
             layer = self.keras_model.get_layer(name)
             if layer.output in self.keras_model.losses:
@@ -2202,11 +2267,11 @@ class MaskRCNN():
         # Pre-defined layer regular expressions
         layer_regex = {
             # all layers but the backbone
-            "heads": r"(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+            "heads": r"(damage\_.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
             # From a specific Resnet stage and up
-            "3+": r"(res3.*)|(bn3.*)|(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
-            "4+": r"(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
-            "5+": r"(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+            "3+": r"(res3.*)|(bn3.*)|(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(damage\_.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+            "4+": r"(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(damage\_.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+            "5+": r"(res5.*)|(bn5.*)|(damage\_.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
             # All layers
             "all": ".*",
         }
