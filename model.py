@@ -802,7 +802,7 @@ class DetectionLayer(KE.Layer):
         image_meta = inputs[3]
 
         # Run detection refinement graph on each item in the batch
-        _, _, window, _ = parse_image_meta_graph(image_meta)
+        _, _, window = parse_image_meta_graph(image_meta)
         detections_batch = utils.batch_slice(
             [rois, mrcnn_class, mrcnn_bbox, window],
             lambda x, y, w, z: refine_detections_graph(x, y, w, z, self.config),
@@ -1196,7 +1196,7 @@ def load_image_gt(dataset, config, image_id, augment=False,
     """
     # Load image and mask
     image = dataset.load_image(image_id)
-    mask, class_ids, damage_mask, damage_class_ids = dataset.load_mask(image_id) # TREVTODO FOLLOW THIS AND GET DMG STUFF
+    mask, class_ids, damage_mask, damage_class_ids = dataset.load_mask(image_id)
     shape = image.shape
     image, window, scale, padding = utils.resize_image(
         image,
@@ -2252,9 +2252,7 @@ class MaskRCNN():
                 padding=self.config.IMAGE_PADDING)
             molded_image = mold_image(molded_image, self.config)
             # Build image_meta
-            image_meta = compose_image_meta(
-                0, image.shape, window,
-                np.zeros([self.config.NUM_CLASSES], dtype=np.int32))
+            image_meta = compose_image_meta(0, image.shape, window)
             # Append
             molded_images.append(molded_image)
             windows.append(window)
