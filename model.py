@@ -1952,12 +1952,13 @@ class MaskRCNN():
 
             damage_class_logits, damage_class, damage_bbox =\
                 fpn_classifier_graph(damage_rois, mrcnn_feature_maps, config.IMAGE_SHAPE,
-                                     config.POOL_SIZE, config.NUM_CLASSES)
+                                     config.POOL_SIZE, config.NUM_CLASSES, name_prefix="damage")
 
             damage_mask = build_fpn_mask_graph(damage_rois, mrcnn_feature_maps,
                                                config.IMAGE_SHAPE,
                                                config.MASK_POOL_SIZE,
-                                               config.NUM_DAMAGE_CLASSES)
+                                               config.NUM_DAMAGE_CLASSES,
+                                               name_prefix="damage")
 
             # TODO: clean up (use tf.identify if necessary)
             output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
@@ -1996,7 +1997,7 @@ class MaskRCNN():
             outputs = [rpn_class_logits, rpn_class, rpn_bbox,
                        mrcnn_class_logits, mrcnn_class, mrcnn_bbox, mrcnn_mask,
                        damage_class_logits, damage_class, damage_bbox, damage_mask,
-                       rpn_rois, output_rois,
+                       rpn_rois, output_rois, output_damage_rois,
                        rpn_class_loss, rpn_bbox_loss, class_loss, bbox_loss, mask_loss]
             model = KM.Model(inputs, outputs, name='mask_rcnn')
         else:
@@ -2007,8 +2008,8 @@ class MaskRCNN():
                                      config.POOL_SIZE, config.NUM_CLASSES)
 
             damage_class_logits, damage_class, damage_bbox =\
-                fpn_classifier_graph(rois, mrcnn_feature_maps, config.IMAGE_SHAPE,
-                                     config.POOL_SIZE, config.NUM_CLASSES)
+                fpn_classifier_graph(rpn_rois, mrcnn_feature_maps, config.IMAGE_SHAPE,
+                                     config.POOL_SIZE, config.NUM_CLASSES, name_prefix="damage")
 
             # Detections
             # output is [batch, num_detections, (y1, x1, y2, x2, class_id, score)] in image coordinates
@@ -2037,7 +2038,8 @@ class MaskRCNN():
             damage_mask = build_fpn_mask_graph(damage_detection_boxes, mrcnn_feature_maps,
                                                config.IMAGE_SHAPE,
                                                config.MASK_POOL_SIZE,
-                                               config.NUM_DAMAGE_CLASSES)
+                                               config.NUM_DAMAGE_CLASSES,
+                                               name_prefix="damage")
 
             inference_inputs = [input_image, input_image_meta]
             inference_outputs = [detections, damage_detections,
